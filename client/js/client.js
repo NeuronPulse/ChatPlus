@@ -225,6 +225,11 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
 
+    // 新增：文件过期通知处理
+    socket.on('fileExpired', (data) => {
+      addSystemMessage(`您的文件 "${data.fileName}" (ID: ${data.fileId}) 已过期并被系统清理`);
+    });
+
     socket.on('publicKeyResponse', (data) => {
       if (data.error) {
         addSystemMessage(`无法获取${data.user}的公钥: ${data.error}`);
@@ -286,8 +291,14 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
 
+    // 完善：存储空间信息展示
     socket.on('storageInfo', (info) => {
       updateStorageInfo(info);
+    });
+
+    socket.on('storageError', (error) => {
+      storageInfoElement.textContent = `存储信息获取失败: ${error.message}`;
+      storageInfoElement.classList.add('error');
     });
 
     // 文件上传相关事件
@@ -336,7 +347,7 @@ document.addEventListener('DOMContentLoaded', () => {
       
       userItem.innerHTML = `
         <div class="user-avatar ${user.hasPublicKey ? 'has-key' : ''}">${initial}</div>
-        <div class="user-name">${escapeHtml(user.name)}</div>
+        <div class="user-name">${escape escapeHtml(user.name)}</div>
         <button class="add-friend-btn" data-userid="${user.id}">
           <i class="fas fa-user-plus"></i>
         </button>
@@ -582,46 +593,38 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
             <div class="file-info">
               <div class="file-name">${escapeHtml(message.fileName)}</div>
-              <div class="file-size">${formatFileSize(message.fileSize)}</div>
-              <button class="download-file-btn" data-url="${message.fileUrl}" data-name="${escapeHtml(message.fileName)}">
-                <i class="fas fa-download"></i> 下载
-              </button>
+              <div class="file-size">${message.fileSize}</div>
             </div>
+            <button class="download-file" onclick="downloadFile('${message.fileUrl}', '${escapeHtml(message.fileName)}')">
+              <i class="fas fa-download"></i>
+            </button>
           </div>
         `;
       }
       
       messageContent = `
-        <div class="sender">${escapeHtml(message.user)} ${message.isEncrypted ? '<span class="encrypted-indicator">🔒 加密</span>' : ''}</div>
-        ${fileContent}
-        <div class="time">${message.time}</div>
+        <div class="message-header">
+          <span class="message-sender">${escapeHtml(message.user)}</span>
+          <span class="message-time">${message.time}</span>
+          ${message.isEncrypted ? '<span class="encrypted-indicator"><i class="fas fa-lock"></i></span>' : ''}
+        </div>
+        <div class="message-content">${fileContent}</div>
       `;
     } else {
-      // 文本消息 - 使用Markdown渲染
-      const htmlContent = marked.parse(message.text);
-      
+      // 文本消息
       messageContent = `
-        <div class="sender">${escapeHtml(message.user)} ${message.isEncrypted ? '<span class="encrypted-indicator">🔒 加密</span>' : ''}</div>
-        <div class="content">${htmlContent}</div>
-        <div class="time">${message.time}</div>
+        <div class="message-header">
+          <span class="message-sender">${escapeHtml(message.user)}</span>
+          <span class="message-time">${message.time}</span>
+          ${message.isEncrypted ? '<span class="encrypted-indicator"><i class="fas fa-lock"></i></span>' : ''}
+        </div>
+        <div class="message-content">${marked.parse(escapeHtml(message.text))}</div>
       `;
     }
     
     messageElement.innerHTML = messageContent;
     messagesContainer.appendChild(messageElement);
-    scrollToBottom();
-    
-    // 添加文件下载事件
-    if (message.type === 'file' && !message.isImage) {
-      const downloadBtn = messageElement.querySelector('.download-file-btn');
-      if (downloadBtn) {
-        downloadBtn.addEventListener('click', (e) => {
-          const url = e.target.closest('.download-file-btn').dataset.url;
-          const name = e.target.closest('.download-file-btn').dataset.name;
-          initDownload(url, name);
-        });
-      }
-    }
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
   }
 
   // 添加系统消息
@@ -629,393 +632,395 @@ document.addEventListener('DOMContentLoaded', () => {
     const messageElement = document.createElement('div');
     messageElement.className = 'message system';
     messageElement.innerHTML = `
-      <div class="content">${escapeHtml(text)}</div>
-      <div class="time">${time}</div>
+      <div class="message-content">
+        <span class="system-text">${escapeHtml(text)}</span>
+        <span class="message-time">${time}</span>
+      </div>
     `;
     messagesContainer.appendChild(messageElement);
-    scrollToBottom();
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
   }
 
   // 发送消息
   function sendMessage() {
     const text = messageInput.value.trim();
-    if (!text || !socket) return;
+    if (!text) return;
     
-    let message = {
-      text: text,
-      isEncrypted: false
+    let encryptedText = text;
+    let isEncrypted = isEncryptionEnabled;
+    
+    // 加密逻辑
+    if (isEncrypted) {
+      try {
+        let targetPublicKey;
+        
+        if (currentChat.type === 'room') {
+          // 房间消息使用自己的公钥加密（演示用，实际房间加密需特殊处理）
+          targetPublicKey = publicKey;
+        } else {
+          // 私聊使用对方的公钥
+          targetPublicKey = userPublicKeys.get(currentChat.id);
+        }
+        
+        if (!targetPublicKey) {
+          addSystemMessage('无法发送加密消息：未获取到目标公钥');
+          isEncrypted = false;
+        } else {
+          rsa.setPublicKey(targetPublicKey);
+          encryptedText = rsa.encrypt(text);
+          if (!encryptedText) {
+            addSystemMessage('加密失败，将发送明文消息');
+            isEncrypted = false;
+          }
+        }
+      } catch (e) {
+        console.error('加密失败:', e);
+        addSystemMessage('加密失败，将发送明文消息');
+        isEncrypted = false;
+      }
+    }
+    
+    // 构建消息对象
+    const message = {
+      text: isEncrypted ? encryptedText : text,
+      plainText: isEncrypted ? text : undefined,
+      user: username,
+      userId: userId,
+      time: new Date().toLocaleTimeString(),
+      isEncrypted: isEncrypted
     };
     
-    // 设置消息目标
+    // 根据聊天类型添加不同参数
     if (currentChat.type === 'room') {
       message.roomId = currentChat.id;
     } else {
       message.targetUserId = currentChat.id;
     }
     
-    // 加密处理
-    if (isEncryptionEnabled) {
-      try {
-        // 查找接收者公钥
-        let recipientPublicKey = null;
-        if (currentChat.type === 'room') {
-          // 房间消息不加密，或需要特殊处理
-          addSystemMessage('房间消息暂不支持加密，请使用私聊');
-          return;
-        } else {
-          // 私聊消息
-          const user = Array.from(userPublicKeys.entries())
-            .find(([id, key]) => id === currentChat.id);
-            
-          if (user) {
-            recipientPublicKey = user[1];
-          }
-        }
-        
-        if (recipientPublicKey) {
-          const encrypt = new JSEncrypt();
-          encrypt.setPublicKey(recipientPublicKey);
-          const encryptedText = encrypt.encrypt(text);
-          
-          if (encryptedText) {
-            message = {
-              ...message,
-              text: encryptedText,
-              plainText: text,
-              isEncrypted: true
-            };
-          } else {
-            throw new Error('加密失败');
-          }
-        } else {
-          throw new Error('未找到接收者的公钥');
-        }
-      } catch (e) {
-        console.error('消息加密失败:', e);
-        addSystemMessage('消息加密失败: ' + e.message);
-        isEncryptionEnabled = false;
-        updateEncryptionStatus();
-        return;
-      }
-    }
-
-    socket.emit('chatMessage', message);
+    // 发送消息
+    socket.emit('sendMessage', message);
+    // 本地直接显示消息
+    handleNewMessage(message);
+    
     messageInput.value = '';
     adjustTextareaHeight();
   }
 
   // 处理文件选择
-  function handleFileSelection(event) {
-    const file = event.target.files[0];
+  function handleFileSelection(e) {
+    const file = e.target.files[0];
     if (!file) return;
-
-    pendingFile = file;
     
+    pendingFile = file;
     previewFileName.textContent = file.name;
     previewFileSize.textContent = formatFileSize(file.size);
     
-    imageOptions.style.display = file.type.startsWith('image/') ? 'flex' : 'none';
-    
+    // 显示预览
     if (file.type.startsWith('image/')) {
       const reader = new FileReader();
-      reader.onload = function(e) {
-        previewImage.src = e.target.result;
+      reader.onload = (event) => {
+        previewImage.src = event.target.result;
         previewImage.style.display = 'block';
+        sendOriginalCheckbox.style.display = 'block';
       };
       reader.readAsDataURL(file);
     } else {
       previewImage.src = '';
       previewImage.style.display = 'none';
+      sendOriginalCheckbox.style.display = 'none';
     }
     
-    filePreview.style.display = 'flex';
+    filePreview.classList.add('visible');
+    fileInput.value = ''; // 允许重复选择同一文件
   }
 
   // 取消文件上传
   function cancelFileUpload() {
-    filePreview.style.display = 'none';
-    fileInput.value = '';
     pendingFile = null;
+    filePreview.classList.remove('visible');
+    previewImage.src = '';
+    previewFileName.textContent = '';
+    previewFileSize.textContent = '';
   }
 
   // 确认文件上传
   function confirmFileUpload() {
-    if (!pendingFile || !socket) return;
-
+    if (!pendingFile) return;
+    
+    // 检查文件大小限制（客户端预检查）
+    const maxSize = 50 * 1024 * 1024; // 50MB，应与服务端配置一致
+    if (pendingFile.size > maxSize) {
+      addSystemMessage(`文件过大，最大支持${formatFileSize(maxSize)}`);
+      cancelFileUpload();
+      return;
+    }
+    
     // 初始化上传
-    const target = currentChat.type === 'room' 
-      ? { roomId: currentChat.id } 
-      : { userId: currentChat.id };
-      
-    socket.emit('initFileUpload', {
-      name: pendingFile.name,
-      size: pendingFile.size,
-      target: target,
-      isEncrypted: isEncryptionEnabled
+    socket.emit('initUpload', {
+      fileName: pendingFile.name,
+      fileSize: pendingFile.size,
+      fileType: pendingFile.type,
+      conversationType: currentChat.type,
+      conversationId: currentChat.id,
+      sendOriginal: sendOriginalCheckbox.checked && pendingFile.type.startsWith('image/')
     });
+    
+    filePreview.classList.remove('visible');
   }
 
   // 开始文件上传
   function startFileUpload(data) {
-    if (!pendingFile) return;
+    if (!pendingFile || data.error) {
+      addSystemMessage(`上传失败: ${data.error || '未知错误'}`);
+      pendingFile = null;
+      return;
+    }
     
     const formData = new FormData();
     formData.append('file', pendingFile);
     formData.append('uploadId', data.uploadId);
+    formData.append('conversationType', currentChat.type);
+    formData.append('conversationId', currentChat.id);
     formData.append('sendOriginal', sendOriginalCheckbox.checked);
     
-    // 创建上传进度元素
-    const uploadElement = document.createElement('div');
-    uploadElement.className = 'transfer-item';
-    uploadElement.dataset.uploadId = data.uploadId;
-    uploadElement.innerHTML = `
-      <div class="transfer-info">
-        <div class="transfer-name">${escapeHtml(data.fileName)}</div>
-        <div class="transfer-stats">
-          <span class="transfer-progress">0%</span>
-          <span class="transfer-speed">-- MB/s</span>
-          <span class="transfer-remaining">剩余: --</span>
-        </div>
-      </div>
-      <div class="transfer-progress-bar">
-        <div class="progress-fill" style="width: 0%"></div>
-      </div>
-      <button class="cancel-transfer" data-uploadid="${data.uploadId}">
-        <i class="fas fa-times"></i>
-      </button>
-    `;
-    uploadsContainer.appendChild(uploadElement);
-    
-    // 创建取消按钮事件
-    uploadElement.querySelector('.cancel-transfer').addEventListener('click', (e) => {
-      const uploadId = e.target.closest('.cancel-transfer').dataset.uploadid;
-      cancelUploadTransfer(uploadId);
-    });
-    
-    // 创建XHR上传
     const xhr = new XMLHttpRequest();
     xhr.open('POST', '/upload', true);
     
-    // 跟踪上传进度
+    // 上传进度处理
     xhr.upload.addEventListener('progress', (e) => {
       if (e.lengthComputable) {
-        const uploaded = e.loaded;
-        socket.emit('updateUploadProgress', {
+        socket.emit('uploadProgress', {
           uploadId: data.uploadId,
-          uploaded: uploaded
+          loaded: e.loaded,
+          total: e.total
         });
       }
     });
     
+    // 上传完成处理
     xhr.addEventListener('load', () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        // 上传完成，通知服务器
-        socket.emit('completeFileUpload', {
-          uploadId: data.uploadId,
-          sendOriginal: sendOriginalCheckbox.checked,
-          isEncrypted: isEncryptionEnabled
-        });
+      if (xhr.status === 200) {
+        try {
+          const result = JSON.parse(xhr.responseText);
+          if (result.success) {
+            socket.emit('uploadFinalize', { uploadId: data.uploadId });
+          } else {
+            socket.emit('uploadError', { uploadId: data.uploadId, error: result.error });
+          }
+        } catch (e) {
+          socket.emit('uploadError', { uploadId: data.uploadId, error: '上传响应解析失败' });
+        }
       } else {
-        socket.emit('uploadError', {
-          uploadId: data.uploadId,
-          error: '上传失败: ' + xhr.statusText
-        });
+        socket.emit('uploadError', { uploadId: data.uploadId, error: `HTTP错误: ${xhr.status}` });
       }
     });
     
+    // 上传错误处理
     xhr.addEventListener('error', () => {
-      socket.emit('uploadError', {
-        uploadId: data.uploadId,
-        error: '网络错误，上传失败'
-      });
+      socket.emit('uploadError', { uploadId: data.uploadId, error: '网络错误' });
     });
     
-    // 保存上传信息
+    // 记录活跃上传
     activeUploads.set(data.uploadId, {
-      xhr: xhr,
-      element: uploadElement,
-      fileName: data.fileName
+      xhr,
+      abort: () => xhr.abort()
     });
     
-    // 开始上传
-    xhr.send(formData);
+    // 创建上传进度UI
+    const uploadElement = document.createElement('div');
+    uploadElement.className = 'transfer-item';
+    uploadElement.id = `upload-${data.uploadId}`;
+    uploadElement.innerHTML = `
+      <div class="transfer-info">
+        <div class="transfer-name">${escapeHtml(pendingFile.name)}</div>
+        <div class="transfer-progress-text">0%</div>
+      </div>
+      <div class="transfer-progress">
+        <div class="progress-bar" style="width: 0%"></div>
+      </div>
+      <div class="transfer-stats">
+        <span class="transfer-speed">0 KB/s</span>
+        <span class="transfer-remaining">剩余: 计算中</span>
+        <button class="cancel-transfer" data-uploadid="${data.uploadId}">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+    `;
+    uploadsContainer.appendChild(uploadElement);
     
-    // 清理预览
-    filePreview.style.display = 'none';
-    fileInput.value = '';
+    // 取消上传按钮事件
+    uploadElement.querySelector('.cancel-transfer').addEventListener('click', (e) => {
+      const uploadId = e.target.closest('.cancel-transfer').dataset.uploadid;
+      const upload = activeUploads.get(uploadId);
+      if (upload) {
+        upload.abort();
+        activeUploads.delete(uploadId);
+        document.getElementById(`upload-${uploadId}`).remove();
+        addSystemMessage('上传已取消');
+      }
+    });
+    
+    // 发送文件
+    xhr.send(formData);
+    pendingFile = null;
+    sendOriginalCheckbox.checked = false;
   }
 
   // 更新上传进度
   function updateUploadProgress(data) {
-    const upload = activeUploads.get(data.uploadId);
-    if (!upload) return;
+    const uploadElement = document.getElementById(`upload-${data.uploadId}`);
+    if (!uploadElement) return;
     
-    const progressBar = upload.element.querySelector('.progress-fill');
-    const progressText = upload.element.querySelector('.transfer-progress');
-    const speedText = upload.element.querySelector('.transfer-speed');
-    const remainingText = upload.element.querySelector('.transfer-remaining');
+    const progressBar = uploadElement.querySelector('.progress-bar');
+    const progressText = uploadElement.querySelector('.transfer-progress-text');
+    const speedText = uploadElement.querySelector('.transfer-speed');
+    const remainingText = uploadElement.querySelector('.transfer-remaining');
     
-    if (progressBar) progressBar.style.width = `${data.progress}%`;
-    if (progressText) progressText.textContent = `${data.progress}% (${formatFileSize(data.uploaded)}/${formatFileSize(data.total)})`;
-    if (speedText) speedText.textContent = data.speedFormatted;
-    if (remainingText) remainingText.textContent = `剩余: ${data.timeRemainingFormatted}`;
+    progressBar.style.width = `${data.progress}%`;
+    progressText.textContent = `${data.progress}%`;
+    speedText.textContent = data.speedFormatted;
+    remainingText.textContent = `剩余: ${data.timeRemainingFormatted}`;
   }
 
   // 完成上传
   function completeUpload(data) {
-    const upload = activeUploads.get(data.uploadId);
-    if (!upload) return;
+    const uploadElement = document.getElementById(`upload-${data.uploadId}`);
+    if (uploadElement) {
+      uploadElement.classList.add('completed');
+      uploadElement.querySelector('.transfer-progress-text').textContent = '100%';
+      uploadElement.querySelector('.progress-bar').style.width = '100%';
+      uploadElement.querySelector('.transfer-stats').innerHTML = '<span class="transfer-complete">上传完成</span>';
+      
+      // 3秒后移除上传进度条
+      setTimeout(() => {
+        uploadElement.remove();
+      }, 3000);
+    }
     
-    // 更新进度为100%
-    upload.element.querySelector('.progress-fill').style.width = '100%';
-    upload.element.querySelector('.transfer-progress').textContent = '100% 上传完成';
-    upload.element.querySelector('.cancel-transfer').style.display = 'none';
+    activeUploads.delete(data.uploadId);
     
-    // 3秒后移除上传进度条
-    setTimeout(() => {
-      if (uploadsContainer.contains(upload.element)) {
-        uploadsContainer.removeChild(upload.element);
-      }
-      activeUploads.delete(data.uploadId);
-    }, 3000);
+    // 显示文件消息
+    if (data.file) {
+      addMessage({
+        ...data.file,
+        user: username,
+        isOwnMessage: true
+      });
+    }
   }
 
   // 处理上传错误
   function handleUploadError(data) {
-    const upload = activeUploads.get(data.uploadId);
-    if (!upload) return;
-    
-    upload.element.classList.add('error');
-    upload.element.querySelector('.transfer-progress').textContent = `错误: ${data.error}`;
-    upload.element.querySelector('.progress-fill').style.backgroundColor = '#ef4444';
-    
-    // 5秒后移除
-    setTimeout(() => {
-      if (uploadsContainer.contains(upload.element)) {
-        uploadsContainer.removeChild(upload.element);
-      }
-      activeUploads.delete(data.uploadId);
-    }, 5000);
-  }
-
-  // 取消上传
-  function cancelUploadTransfer(uploadId) {
-    const upload = activeUploads.get(uploadId);
-    if (!upload) return;
-    
-    // 中止XHR请求
-    upload.xhr.abort();
-    
-    // 移除元素
-    if (uploadsContainer.contains(upload.element)) {
-      uploadsContainer.removeChild(upload.element);
+    const uploadElement = document.getElementById(`upload-${data.uploadId}`);
+    if (uploadElement) {
+      uploadElement.classList.add('error');
+      uploadElement.querySelector('.transfer-progress-text').textContent = '上传失败';
+      uploadElement.querySelector('.transfer-stats').innerHTML = `<span class="transfer-error">${data.error}</span>`;
+      
+      // 5秒后移除上传进度条
+      setTimeout(() => {
+        uploadElement.remove();
+      }, 5000);
     }
     
-    activeUploads.delete(uploadId);
-    addSystemMessage(`已取消上传: ${upload.fileName}`);
-  }
-
-  // 初始化文件下载
-  function initDownload(fileUrl, fileName) {
-    if (!socket) return;
-    
-    socket.emit('initFileDownload', {
-      fileUrl: fileUrl,
-      fileName: fileName
-    });
+    activeUploads.delete(data.uploadId);
+    addSystemMessage(`文件上传失败: ${data.error}`);
   }
 
   // 开始文件下载
   function startFileDownload(data) {
-    // 创建下载进度元素
-    const downloadElement = document.createElement('div');
-    downloadElement.className = 'transfer-item';
-    downloadElement.dataset.downloadId = data.downloadId;
-    downloadElement.innerHTML = `
-      <div class="transfer-info">
-        <div class="transfer-name">${escapeHtml(data.fileName)}</div>
-        <div class="transfer-stats">
-          <span class="transfer-progress">0%</span>
-          <span class="transfer-speed">-- MB/s</span>
-          <span class="transfer-remaining">剩余: --</span>
-        </div>
-      </div>
-      <div class="transfer-progress-bar">
-        <div class="progress-fill" style="width: 0%"></div>
-      </div>
-      <button class="cancel-transfer" data-downloadid="${data.downloadId}">
-        <i class="fas fa-times"></i>
-      </button>
-    `;
-    downloadsContainer.appendChild(downloadElement);
+    if (data.error) {
+      addSystemMessage(`下载失败: ${data.error}`);
+      return;
+    }
     
-    // 创建取消按钮事件
-    downloadElement.querySelector('.cancel-transfer').addEventListener('click', (e) => {
-      const downloadId = e.target.closest('.cancel-transfer').dataset.downloadid;
-      cancelDownloadTransfer(downloadId);
-    });
-    
-    // 创建XHR下载
     const xhr = new XMLHttpRequest();
-    xhr.open('GET', data.fileUrl, true);
+    xhr.open('GET', `/download/${data.fileId}`, true);
     xhr.responseType = 'blob';
     
-    // 跟踪下载进度
+    // 下载进度处理
     xhr.addEventListener('progress', (e) => {
       if (e.lengthComputable) {
-        const downloaded = e.loaded;
-        socket.emit('updateDownloadProgress', {
+        socket.emit('downloadProgress', {
           downloadId: data.downloadId,
-          downloaded: downloaded
+          loaded: e.loaded,
+          total: e.total
         });
       }
     });
     
+    // 下载完成处理
     xhr.addEventListener('load', () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        // 下载完成，创建下载链接
-        const blob = new Blob([xhr.response]);
+      if (xhr.status === 200) {
+        // 创建下载链接
+        const blob = new Blob([xhr.response], { type: data.fileType });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
         a.download = data.fileName;
         document.body.appendChild(a);
         a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        
-        // 更新进度为100%
-        downloadElement.querySelector('.progress-fill').style.width = '100%';
-        downloadElement.querySelector('.transfer-progress').textContent = '100% 下载完成';
-        downloadElement.querySelector('.cancel-transfer').style.display = 'none';
-        
-        // 3秒后移除
         setTimeout(() => {
-          if (downloadsContainer.contains(downloadElement)) {
-            downloadsContainer.removeChild(downloadElement);
-          }
-          activeDownloads.delete(data.downloadId);
-        }, 3000);
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }, 0);
+        
+        socket.emit('downloadComplete', { downloadId: data.downloadId });
+        addSystemMessage(`文件 "${data.fileName}" 下载完成`);
       } else {
-        socket.emit('downloadError', {
-          downloadId: data.downloadId,
-          error: '下载失败: ' + xhr.statusText
+        socket.emit('downloadError', { 
+          downloadId: data.downloadId, 
+          error: `HTTP错误: ${xhr.status}` 
         });
       }
     });
     
+    // 下载错误处理
     xhr.addEventListener('error', () => {
-      socket.emit('downloadError', {
-        downloadId: data.downloadId,
-        error: '网络错误，下载失败'
+      socket.emit('downloadError', { 
+        downloadId: data.downloadId, 
+        error: '网络错误' 
       });
     });
     
-    // 保存下载信息
+    // 记录活跃下载
     activeDownloads.set(data.downloadId, {
-      xhr: xhr,
-      element: downloadElement,
-      fileName: data.fileName
+      xhr,
+      abort: () => xhr.abort()
+    });
+    
+    // 创建下载进度UI
+    const downloadElement = document.createElement('div');
+    downloadElement.className = 'transfer-item';
+    downloadElement.id = `download-${data.downloadId}`;
+    downloadElement.innerHTML = `
+      <div class="transfer-info">
+        <div class="transfer-name">${escapeHtml(data.fileName)}</div>
+        <div class="transfer-progress-text">0%</div>
+      </div>
+      <div class="transfer-progress">
+        <div class="progress-bar" style="width: 0%"></div>
+      </div>
+      <div class="transfer-stats">
+        <span class="transfer-speed">0 KB/s</span>
+        <span class="transfer-remaining">剩余: 计算中</span>
+        <button class="cancel-transfer" data-downloadid="${data.downloadId}">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+    `;
+    downloadsContainer.appendChild(downloadElement);
+    
+    // 取消下载按钮事件
+    downloadElement.querySelector('.cancel-transfer').addEventListener('click', (e) => {
+      const downloadId = e.target.closest('.cancel-transfer').dataset.downloadid;
+      const download = activeDownloads.get(downloadId);
+      if (download) {
+        download.abort();
+        activeDownloads.delete(downloadId);
+        document.getElementById(`download-${downloadId}`).remove();
+        addSystemMessage('下载已取消');
+      }
     });
     
     // 开始下载
@@ -1024,128 +1029,116 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // 更新下载进度
   function updateDownloadProgress(data) {
-    const download = activeDownloads.get(data.downloadId);
-    if (!download) return;
+    const downloadElement = document.getElementById(`download-${data.downloadId}`);
+    if (!downloadElement) return;
     
-    const progressBar = download.element.querySelector('.progress-fill');
-    const progressText = download.element.querySelector('.transfer-progress');
-    const speedText = download.element.querySelector('.transfer-speed');
-    const remainingText = download.element.querySelector('.transfer-remaining');
+    const progressBar = downloadElement.querySelector('.progress-bar');
+    const progressText = downloadElement.querySelector('.transfer-progress-text');
+    const speedText = downloadElement.querySelector('.transfer-speed');
+    const remainingText = downloadElement.querySelector('.transfer-remaining');
     
-    if (progressBar) progressBar.style.width = `${data.progress}%`;
-    if (progressText) progressText.textContent = `${data.progress}% (${formatFileSize(data.uploaded)}/${formatFileSize(data.total)})`;
-    if (speedText) speedText.textContent = data.speedFormatted;
-    if (remainingText) remainingText.textContent = `剩余: ${data.timeRemainingFormatted}`;
+    progressBar.style.width = `${data.progress}%`;
+    progressText.textContent = `${data.progress}%`;
+    speedText.textContent = data.speedFormatted;
+    remainingText.textContent = `剩余: ${data.timeRemainingFormatted}`;
   }
 
   // 处理下载错误
   function handleDownloadError(data) {
-    const download = activeDownloads.get(data.downloadId);
-    if (!download) return;
-    
-    download.element.classList.add('error');
-    download.element.querySelector('.transfer-progress').textContent = `错误: ${data.error}`;
-    download.element.querySelector('.progress-fill').style.backgroundColor = '#ef4444';
-    
-    // 5秒后移除
-    setTimeout(() => {
-      if (downloadsContainer.contains(download.element)) {
-        downloadsContainer.removeChild(download.element);
-      }
-      activeDownloads.delete(data.downloadId);
-    }, 5000);
-  }
-
-  // 取消下载
-  function cancelDownloadTransfer(downloadId) {
-    const download = activeDownloads.get(downloadId);
-    if (!download) return;
-    
-    // 中止XHR请求
-    download.xhr.abort();
-    
-    // 移除元素
-    if (downloadsContainer.contains(download.element)) {
-      downloadsContainer.removeChild(download.element);
+    const downloadElement = document.getElementById(`download-${data.downloadId}`);
+    if (downloadElement) {
+      downloadElement.classList.add('error');
+      downloadElement.querySelector('.transfer-progress-text').textContent = '下载失败';
+      downloadElement.querySelector('.transfer-stats').innerHTML = `<span class="transfer-error">${data.error}</span>`;
+      
+      // 5秒后移除下载进度条
+      setTimeout(() => {
+        downloadElement.remove();
+      }, 5000);
     }
     
-    activeDownloads.delete(downloadId);
-    addSystemMessage(`已取消下载: ${download.fileName}`);
+    activeDownloads.delete(data.downloadId);
+    addSystemMessage(`文件下载失败: ${data.error}`);
   }
 
   // 打开图片查看器
-  function openImageViewer(url, altText) {
+  function openImageViewer(url, fileName) {
     currentImageUrl = url;
     modalImage.src = url;
-    modalImage.alt = altText;
     imageViewerModal.style.display = 'flex';
+    downloadImage.dataset.filename = fileName;
   }
 
-  // 下载当前图片
+  // 下载当前查看的图片
   function downloadCurrentImage() {
     if (!currentImageUrl) return;
     
-    initDownload(currentImageUrl, currentImageUrl.split('/').pop().split('-').slice(2).join('-') || 'image');
-    imageViewerModal.style.display = 'none';
+    const fileName = downloadImage.dataset.filename || 'image.jpg';
+    fetch(currentImageUrl)
+      .then(response => response.blob())
+      .then(blob => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }, 0);
+      })
+      .catch(error => {
+        console.error('图片下载失败:', error);
+        addSystemMessage('图片下载失败');
+      });
+  }
+
+  // 下载文件
+  function downloadFile(url, fileName) {
+    socket.emit('initDownload', { fileUrl: url, fileName: fileName });
   }
 
   // 切换加密状态
   function toggleEncryption() {
     isEncryptionEnabled = !isEncryptionEnabled;
-    encryptToggle.classList.toggle('active', isEncryptionEnabled);
     updateEncryptionStatus();
-    
-    if (isEncryptionEnabled && currentChat.type === 'room') {
-      addSystemMessage('房间消息暂不支持加密，请使用私聊');
-      isEncryptionEnabled = false;
-      encryptToggle.classList.remove('active');
-      updateEncryptionStatus();
-    }
   }
 
   // 更新加密状态显示
   function updateEncryptionStatus() {
-    if (isEncryptionEnabled && currentChat.type === 'private') {
-      encryptionStatusIndicator.className = 'status-indicator status-encrypted';
-      encryptionStatusText.textContent = `端到端加密: 已启用 (与 ${currentChat.name} 通信)`;
+    if (isEncryptionEnabled) {
+      encryptToggle.classList.add('enabled');
+      encryptionStatusIndicator.className = 'fas fa-lock';
+      encryptionStatusText.textContent = '加密已启用';
+      
+      // 检查是否可以加密
+      let canEncrypt = false;
+      if (currentChat.type === 'room') {
+        // 房间加密需要特殊处理，这里简化处理
+        canEncrypt = true;
+      } else {
+        canEncrypt = userPublicKeys.has(currentChat.id);
+      }
+      
+      if (!canEncrypt) {
+        encryptionStatusText.textContent = '加密已启用，但无法获取目标公钥';
+        encryptionStatusIndicator.className = 'fas fa-exclamation-triangle';
+      }
     } else {
-      encryptionStatusIndicator.className = 'status-indicator status-not-encrypted';
-      encryptionStatusText.textContent = currentChat.type === 'room' 
-        ? '端到端加密: 房间消息不支持加密'
-        : '端到端加密: 未启用';
+      encryptToggle.classList.remove('enabled');
+      encryptionStatusIndicator.className = 'fas fa-unlock';
+      encryptionStatusText.textContent = '加密已禁用';
     }
   }
 
-  // 更新存储空间信息
-  function updateStorageInfo(info) {
-    if (!storageInfoElement) return;
-    
-    storageInfoElement.innerHTML = `
-      <div class="storage-label">服务器存储空间</div>
-      <div class="storage-bar">
-        <div class="storage-used" style="width: ${info.usedPercentage}%"></div>
-      </div>
-      <div class="storage-stats">
-        <span>已使用: ${formatFileSize(info.total - info.free)}</span>
-        <span>剩余: ${info.freeFormatted}</span>
-        <span>总计: ${info.totalFormatted}</span>
-      </div>
-    `;
-  }
-
-  // 辅助函数：滚动到底部
-  function scrollToBottom() {
-    messagesContainer.scrollTop = messagesContainer.scrollHeight;
-  }
-
-  // 辅助函数：调整文本框高度
+  // 调整文本框高度
   function adjustTextareaHeight() {
     messageInput.style.height = 'auto';
-    const scrollHeight = messageInput.scrollHeight;
-    messageInput.style.height = `${Math.min(scrollHeight, 120)}px`;
+    messageInput.style.height = Math.min(messageInput.scrollHeight, 200) + 'px';
   }
 
-  // 辅助函数：格式化文件大小
+  // 格式化文件大小
   function formatFileSize(bytes) {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -1153,20 +1146,36 @@ document.addEventListener('DOMContentLoaded', () => {
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
   }
 
-  // 辅助函数：转义HTML防止XSS攻击
-  function escapeHtml(unsafe) {
-    if (typeof unsafe !== 'string') return '';
-    return unsafe
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#039;");
+  // 更新存储信息显示
+  function updateStorageInfo(info) {
+    storageInfoElement.classList.remove('error');
+    storageInfoElement.innerHTML = `
+      存储空间: 总容量 ${info.totalFormatted}, 剩余 ${info.freeFormatted} (已使用 ${info.usedPercentage}%)
+    `;
+    
+    // 根据使用情况添加样式
+    if (info.usedPercentage > 90) {
+      storageInfoElement.classList.add('warning');
+    } else {
+      storageInfoElement.classList.remove('warning');
+    }
   }
 
-  // 暴露给全局
-  window.openImageViewer = openImageViewer;
+  // HTML转义
+  function escapeHtml(text) {
+    if (!text) return '';
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
 
   // 初始化应用
   init();
+
+  // 暴露全局函数
+  window.openImageViewer = openImageViewer;
+  window.downloadFile = downloadFile;
 });
