@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>现代聊天应用</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/github.min.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- 侧边栏 - 移动端可隐藏 -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h2>在线用户</h2>
+        <button class="close-sidebar" id="closeSidebar">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="user-list" id="userList">
+        <!-- 用户列表将通过JS动态生成 -->
+      </div>
+    </aside>
+
+    <!-- 主聊天区域 -->
+    <main class="chat-container">
+      <header class="chat-header">
+        <button class="open-sidebar" id="openSidebar">
+          <i class="fas fa-users"></i>
+        </button>
+        <h1>现代聊天</h1>
+        <div class="header-controls">
+          <div class="encryption-status">
+            <span class="status-indicator status-not-encrypted" id="encryptionStatusIndicator"></span>
+            <span id="encryptionStatusText">端到端加密: 未启用</span>
+          </div>
+          <button class="encrypt-toggle" id="encryptToggle">
+            <i class="fas fa-lock"></i>
+          </button>
+          <div class="user-info" id="userInfo">
+            <!-- 登录后显示用户名 -->
+          </div>
+        </div>
+      </header>
+
+      <!-- 登录界面 -->
+      <div class="login-screen" id="loginScreen">
+        <div class="login-card">
+          <h2>加入聊天</h2>
+          <input type="text" id="usernameInput" placeholder="请输入用户名" autocomplete="off">
+          <button id="loginButton">登录</button>
+        </div>
+      </div>
+
+      <!-- 聊天消息区域 -->
+      <div class="messages" id="messages">
+        <!-- 消息将通过JS动态生成 -->
+      </div>
+
+      <!-- 文件预览区域 -->
+      <div class="file-preview" id="filePreview">
+        <div class="preview-content">
+          <img id="previewImage" src="" alt="预览图" class="preview-img">
+          <div class="preview-info">
+            <div class="preview-filename" id="previewFileName"></div>
+            <div class="preview-filesize" id="previewFileSize"></div>
+            <div class="image-options" id="imageOptions">
+              <label class="option-label">
+                <input type="checkbox" id="sendOriginalCheckbox" checked>
+                发送原图
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="preview-actions">
+          <button class="cancel-upload" id="cancelUpload">取消</button>
+          <button class="confirm-upload" id="confirmUpload">发送</button>
+        </div>
+      </div>
+
+      <!-- 输入区域 -->
+      <div class="input-area">
+        <div class="input-tools">
+          <label class="tool-button file-upload-label">
+            <i class="fas fa-paperclip"></i>
+            <input type="file" id="fileInput" class="file-upload-input" accept="image/*,application/pdf,text/plain">
+          </label>
+          <button class="tool-button" id="emojiButton">
+            <i class="fas fa-smile"></i>
+          </button>
+          <div class="markdown-hint">
+            <span>支持Markdown格式</span>
+            <div class="markdown-cheatsheet">
+              <div class="cheatsheet-item"><strong>**粗体**</strong> → <b>粗体</b></div>
+              <div class="cheatsheet-item"><em>_斜体_</em> → <i>斜体</i></div>
+              <div class="cheatsheet-item"><code>`代码`</code> → <code>代码</code></div>
+              <div class="cheatsheet-item">[链接](url) → <a href="#" class="hint-link">链接</a></div>
+            </div>
+          </div>
+        </div>
+        <div class="input-wrapper">
+          <textarea id="messageInput" placeholder="输入消息... 支持Markdown格式"></textarea>
+        </div>
+        <button class="send-button" id="sendButton">
+          <i class="fas fa-paper-plane"></i>
+        </button>
+      </div>
+    </main>
+  </div>
+
+  <!-- 图片查看器模态框 -->
+  <div class="image-viewer-modal" id="imageViewerModal">
+    <div class="modal-content">
+      <button class="close-modal" id="closeModal">&times;</button>
+      <img id="modalImage" src="" alt="图片查看">
+      <div class="image-actions">
+        <button class="download-image" id="downloadImage">
+          <i class="fas fa-download"></i> 下载图片
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jsencrypt/3.3.1/jsencrypt.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/4.3.0/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
+  <script src="js/client.js"></script>
+</body>
+</html>
+    
