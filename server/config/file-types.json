@@ -1,0 +1,17 @@
+{
+  "blockedExtensions": [
+    ".exe", ".dll", ".sys", ".bat", ".cmd", 
+    ".sh", ".php", ".jsp", ".asp", ".aspx",
+    ".py", ".js", ".vbs", ".ps1", 
+    ".html", ".htm", ".svg", ".xml", ".json"
+  ],
+  "allowedImageTypes": [
+    "image/jpeg", "image/png", "image/gif", "image/webp"
+  ],
+  "allowedFileTypes": [
+    "application/pdf", "text/plain", "application/zip", 
+    "application/x-rar-compressed", "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  ],
+  "maxFileSize": 10485760
+}

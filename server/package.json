@@ -1,0 +1,15 @@
+{
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "multer": "^2.0.2",
+    "socket.io": "^4.7.2",
+    "uuid": "^9.0.1",
+    "validator": "^13.12.0",
+    "sharp": "^0.33.4",
+    "diskspace": "^2.0.0"
+  },
+  "scripts": {
+    "start": "node index.js"
+  }
+}
