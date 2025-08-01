@@ -9,7 +9,7 @@ const fsSync = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const validator = require('validator');
 const sharp = require('sharp');
-const { diskSpace } = require('diskspace');
+const si = require('systeminformation'); // 使用纯JS库替代diskusage
 const fileTypesConfig = require('./config/file-types.json');
 
 // 创建Express应用
@@ -135,22 +135,36 @@ const processImage = async (filePath, fileName, sender) => {
 
 // 获取剩余存储空间
 const getRemainingStorage = async () => {
-  return new Promise((resolve) => {
-    diskSpace.check(uploadDir, (err, total, free) => {
-      if (err) {
-        console.error('获取磁盘空间失败:', err);
-        resolve({ total: 0, free: 0 });
-      } else {
-        resolve({ 
-          total, 
-          free,
-          totalFormatted: formatFileSize(total),
-          freeFormatted: formatFileSize(free),
-          usedPercentage: total ? Math.round(((total - free) / total) * 100) : 0
-        });
-      }
-    });
-  });
+  try {
+    // 获取当前磁盘信息
+    const diskInfo = await si.fsSize();
+    // 找到包含上传目录的磁盘分区
+    const uploadDirDrive = uploadDir.split(path.sep)[0] + path.sep;
+    const targetDisk = diskInfo.find(disk => disk.mount === uploadDirDrive);
+    
+    if (targetDisk) {
+      return { 
+        total: targetDisk.size, 
+        free: targetDisk.available,
+        totalFormatted: formatFileSize(targetDisk.size),
+        freeFormatted: formatFileSize(targetDisk.available),
+        usedPercentage: Math.round(((targetDisk.size - targetDisk.available) / targetDisk.size) * 100)
+      };
+    } else {
+      // 如果找不到对应分区，返回第一个磁盘信息
+      const firstDisk = diskInfo[0] || { size: 0, available: 0 };
+      return { 
+        total: firstDisk.size, 
+        free: firstDisk.available,
+        totalFormatted: formatFileSize(firstDisk.size),
+        freeFormatted: formatFileSize(firstDisk.available),
+        usedPercentage: firstDisk.size ? Math.round(((firstDisk.size - firstDisk.available) / firstDisk.size) * 100) : 0
+      };
+    }
+  } catch (error) {
+    console.error('获取磁盘空间失败:', error);
+    return { total: 0, free: 0 };
+  }
 };
 
 // 计算上传/下载统计信息
@@ -360,7 +374,7 @@ io.on('connection', (socket) => {
     
     const room = dataStore.rooms.get(roomId);
     const requesterSocketId = Array.from(dataStore.users.entries())
-      .find(([id, u]) => room.members.includes(id) ? false : true)?.[0];
+      .find(([id, u]) => !room.members.includes(id))?.[0];
       
     if (!requesterSocketId) return;
     
@@ -754,7 +768,7 @@ io.on('connection', (socket) => {
     const user = dataStore.users.get(socket.id);
     if (!user) return;
     
-    console.log('用户断开连接:', user.name);
+    console.log('用户断开连接连接:', user.name);
     
     // 更新房间成员
     dataStore.rooms.forEach(room => {
