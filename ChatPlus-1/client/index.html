@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChatPlus - 现代聊天应用</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+  <script src="https://cdn.socket.io/4.4.1/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsencrypt@3.2.1/bin/jsencrypt.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js" crossorigin="anonymous"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css" crossorigin="anonymous">
+  
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: '#165DFF',
+            secondary: '#36BFFA',
+            accent: '#7B61FF',
+            success: '#00B42A',
+            warning: '#FF7D00',
+            danger: '#F53F3F',
+            dark: '#1D2129',
+            light: '#F2F3F5'
+          },
+          fontFamily: {
+            inter: ['Inter', 'system-ui', 'sans-serif'],
+          },
+        },
+      }
+    }
+  </script>
+  
+  <style type="text/tailwindcss">
+    @layer utilities {
+      .content-auto {
+        content-visibility: auto;
+      }
+      .scrollbar-hide {
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+      }
+      .scrollbar-hide::-webkit-scrollbar {
+        display: none;
+      }
+      .text-shadow {
+        text-shadow: 0 1px 2px rgba(0,0,0,0.1);
+      }
+      .message-appear {
+        animation: messageIn 0.3s ease-out forwards;
+      }
+      .pulse-animation {
+        animation: pulse 2s infinite;
+      }
+      @keyframes messageIn {
+        from { transform: translateY(10px); opacity: 0; }
+        to { transform: translateY(0); opacity: 1; }
+      }
+      @keyframes pulse {
+        0% { transform: scale(1); }
+        50% { transform: scale(1.05); }
+        100% { transform: scale(1); }
+      }
+    }
+  </style>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+
+<body class="font-inter bg-gray-50 text-dark h-screen flex flex-col overflow-hidden">
+  <!-- 登录界面 -->
+  <div id="loginScreen" class="flex items-center justify-center h-full bg-gradient-to-br from-primary to-accent p-4">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 transform transition-all">
+      <div class="text-center mb-8">
+        <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-4">
+          <i class="fa fa-comments text-3xl text-primary"></i>
+        </div>
+        <h1 class="text-[clamp(1.5rem,3vw,2rem)] font-bold text-dark">ChatPlus</h1>
+        <p class="text-gray-500 mt-2">请输入用户名登录</p>
+      </div>
+      
+      <div>
+        <label for="usernameInput" class="block text-sm font-medium text-gray-700 mb-1">用户名</label>
+        <div class="relative">
+          <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-500">
+            <i class="fa fa-user"></i>
+          </span>
+          <input 
+            type="text" 
+            id="usernameInput" 
+            class="w-full pl-10 pr-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all outline-none"
+            placeholder="请输入用户名"
+            required
+          >
+        </div>
+      </div>
+      
+      <button 
+        id="loginButton"
+        class="w-full bg-primary hover:bg-primary/90 text-white font-medium py-3 px-4 rounded-lg transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center mt-6"
+      >
+        <span>登录</span>
+        <i class="fa fa-arrow-right ml-2"></i>
+      </button>
+      
+      <div id="loginError" class="mt-4 text-danger text-sm hidden"></div>
+      
+      <div class="mt-6 text-center text-gray-500 text-sm">
+        <p>登录即表示您同意我们的<a href="#" class="text-primary hover:underline">服务条款</a></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 主应用界面 -->
+  <div id="app" class="flex h-full">
+    <!-- 侧边栏 -->
+    <aside class="sidebar w-64 bg-white border-r border-gray-200 flex flex-col h-full shadow-sm z-10 transition-all duration-300 transform -translate-x-full md:translate-x-0" id="sidebar">
+      <!-- 侧边栏头部 -->
+      <div class="p-4 border-b border-gray-200 flex items-center justify-between">
+        <h1 class="text-xl font-bold text-primary flex items-center">
+          <i class="fa fa-comments-o mr-2"></i>
+          <span>ChatPlus</span>
+        </h1>
+        <button id="closeSidebar" class="md:hidden text-gray-500 hover:text-gray-700">
+          <i class="fa fa-times"></i>
+        </button>
+      </div>
+      
+      <!-- 存储信息 -->
+      <div class="p-3 bg-primary/5 border-b border-gray-200">
+        <div class="text-xs text-gray-500 mb-1 flex justify-between">
+          <span>服务器存储</span>
+          <span id="storagePercentage">0%</span>
+        </div>
+        <div class="w-full bg-gray-200 rounded-full h-1.5">
+          <div id="storageBar" class="bg-primary h-1.5 rounded-full" style="width: 0%"></div>
+        </div>
+        <div class="text-xs text-gray-500 mt-1" id="storageText">剩余: 0B / 总容量: 0B</div>
+      </div>
+      
+      <!-- 侧边栏标签 -->
+      <div class="flex border-b border-gray-200">
+        <button id="tabUsers" class="flex-1 py-3 text-sm font-medium text-primary border-b-2 border-primary">
+          <i class="fa fa-users mr-1"></i> 用户
+        </button>
+        <button id="tabRooms" class="flex-1 py-3 text-sm font-medium text-gray-500 hover:text-gray-700">
+          <i class="fa fa-building mr-1"></i> 房间
+        </button>
+        <button id="tabFriends" class="flex-1 py-3 text-sm font-medium text-gray-500 hover:text-gray-700">
+          <i class="fa fa-heart mr-1"></i> 好友
+        </button>
+      </div>
+      
+      <!-- 用户列表内容 -->
+      <div id="contentUsers" class="flex-1 overflow-y-auto scrollbar-hide p-2">
+        <div id="userList" class="space-y-1">
+          <!-- 用户列表将通过JS动态生成 -->
+        </div>
+      </div>
+      
+      <!-- 房间列表内容 -->
+      <div id="contentRooms" class="hidden flex-1 overflow-y-auto scrollbar-hide p-2">
+        <div class="mb-3">
+          <div class="flex">
+            <input 
+              type="text" 
+              id="roomNameInput" 
+              placeholder="输入房间名称" 
+              class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-l-lg focus:outline-none focus:border-primary"
+            >
+            <button id="createRoomButton" class="bg-primary text-white px-3 py-2 text-sm rounded-r-lg hover:bg-primary/90">
+              创建
+            </button>
+          </div>
+        </div>
+        <div id="roomList" class="space-y-1">
+          <!-- 房间列表将通过JS动态生成 -->
+        </div>
+      </div>
+      
+      <!-- 好友列表内容 -->
+      <div id="contentFriends" class="hidden flex-1 overflow-y-auto scrollbar-hide p-2">
+        <div class="mb-3">
+          <button id="friendRequestsButton" class="w-full flex items-center justify-between bg-gray-100 hover:bg-gray-200 text-sm p-2 rounded-lg">
+            <span>好友请求</span>
+            <span class="bg-primary text-white text-xs px-2 py-0.5 rounded-full" id="friendRequestCount">0</span>
+          </button>
+          
+          <div id="friendRequestsContainer" class="hidden mt-2 bg-white rounded-lg shadow p-2 space-y-2">
+            <!-- 好友请求将通过JS动态生成 -->
+          </div>
+        </div>
+        <div id="friendList" class="space-y-1">
+          <!-- 好友列表将通过JS动态生成 -->
+        </div>
+      </div>
+      
+      <!-- 当前用户信息 -->
+      <div class="p-3 border-t border-gray-200 flex items-center">
+        <div class="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-medium">
+          <span id="currentUserInitials">U</span>
+        </div>
+        <div class="ml-3 flex-1 min-w-0">
+          <p id="userInfo" class="text-sm font-medium truncate">用户名</p>
+          <p id="currentUserStatus" class="text-xs text-gray-500">在线</p>
+        </div>
+        <button id="logoutBtn" class="text-gray-500 hover:text-danger p-1">
+          <i class="fa fa-sign-out"></i>
+        </button>
+      </div>
+    </aside>
+
+    <!-- 主聊天区域 -->
+    <main class="flex-1 flex flex-col h-full overflow-hidden bg-gray-50">
+      <!-- 聊天头部 -->
+      <header class="bg-white border-b border-gray-200 p-4 flex items-center justify-between shadow-sm">
+        <button id="openSidebar" class="md:hidden mr-3 text-gray-500">
+          <i class="fa fa-bars"></i>
+        </button>
+        
+        <div class="flex items-center">
+          <div id="chatAvatar" class="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-medium">
+            <span>C</span>
+          </div>
+          <div class="ml-3">
+            <h2 id="chatHeader" class="font-medium">公共聊天室</h2>
+            <p id="chatMembers" class="text-xs text-gray-500">在线成员</p>
+          </div>
+        </div>
+        
+        <div class="flex items-center space-x-2">
+          <div class="encryption-status flex items-center">
+            <div id="encryptionStatusIndicator" class="status-indicator status-not-encrypted mr-1"></div>
+            <span id="encryptionStatusText" class="text-sm">未加密</span>
+          </div>
+          <button id="encryptToggle" class="encrypt-toggle" title="切换加密模式">
+            <i class="fa fa-lock"></i>
+          </button>
+        </div>
+      </header>
+      
+      <!-- 消息区域 -->
+      <div id="messages" class="flex-1 p-4 overflow-y-auto scrollbar-hide space-y-3">
+        <!-- 消息将通过JS动态生成 -->
+      </div>
+      
+      <!-- 文件预览区域 -->
+      <div id="filePreview" class="hidden p-4 border-t border-gray-200 bg-white">
+        <div class="flex items-start">
+          <div id="previewImageContainer" class="mr-3">
+            <img id="previewImage" src="" alt="预览图" class="max-w-32 max-h-32 object-contain rounded">
+          </div>
+          <div class="flex-1">
+            <h4 id="previewFileName" class="font-medium"></h4>
+            <p id="previewFileSize" class="text-sm text-gray-500"></p>
+            <div class="mt-2 flex space-x-2">
+              <label class="flex items-center text-sm">
+                <input type="checkbox" id="sendOriginalCheckbox" checked>
+                <span class="ml-1">发送原图</span>
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="mt-3 flex justify-end space-x-2">
+          <button id="cancelUpload" class="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
+            取消
+          </button>
+          <button id="confirmUpload" class="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90">
+            发送
+          </button>
+        </div>
+      </div>
+      
+      <!-- 输入区域 -->
+      <div class="input-area p-4 bg-white border-t border-gray-200">
+        <div class="input-tools flex items-center mr-2">
+          <label class="tool-button" for="fileInput" title="上传文件">
+            <i class="fa fa-paperclip"></i>
+          </label>
+          <input type="file" id="fileInput" class="hidden">
+          
+          <button class="tool-button" title="表情">
+            <i class="fa fa-smile-o"></i>
+          </button>
+          
+          <div class="markdown-hint tool-button">
+            <i class="fa fa-markdown"></i>
+            <div class="markdown-cheatsheet">
+              <div class="cheatsheet-item"><strong>**粗体**</strong> - 粗体文本</div>
+              <div class="cheatsheet-item"><em>_斜体_</em> - 斜体文本</div>
+              <div class="cheatsheet-item"><code>`代码`</code> - 代码片段</div>
+              <div class="cheatsheet-item">[链接](url) - 超链接</div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="input-wrapper flex-1">
+          <textarea 
+            id="messageInput" 
+            placeholder="输入消息..." 
+            class="w-full px-4 py-2 rounded-full border border-gray-300 focus:outline-none focus:border-primary resize-none"
+          ></textarea>
+        </div>
+        
+        <button id="sendButton" class="send-button ml-2">
+          <i class="fa fa-paper-plane"></i>
+        </button>
+      </div>
+    </main>
+  </div>
+  
+  <!-- 图片查看器模态框 -->
+  <div id="imageViewerModal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 hidden">
+    <div class="relative max-w-4xl w-full p-4">
+      <button id="closeModal" class="absolute top-2 right-2 text-white bg-black/50 rounded-full w-8 h-8 flex items-center justify-center z-10">
+        <i class="fa fa-times"></i>
+      </button>
+      <button id="downloadImage" class="absolute top-2 left-2 text-white bg-black/50 rounded-full w-8 h-8 flex items-center justify-center z-10">
+        <i class="fa fa-download"></i>
+      </button>
+      <img id="modalImage" src="" alt="大图预览" class="max-h-[80vh] max-w-full object-contain">
+    </div>
+  </div>
+
+  <script src="js/client.js"></script>
+</body>
+</html>

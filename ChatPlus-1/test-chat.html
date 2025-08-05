@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChatPlus 测试页面</title>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .chat-container {
+            display: flex;
+            gap: 20px;
+        }
+        .user-panel {
+            flex: 1;
+            border: 1px solid #ccc;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .messages {
+            height: 300px;
+            overflow-y: auto;
+            border: 1px solid #eee;
+            margin-bottom: 10px;
+            padding: 10px;
+            background-color: #f9f9f9;
+        }
+        .message {
+            margin-bottom: 5px;
+            padding: 5px;
+            border-radius: 3px;
+        }
+        .own-message {
+            background-color: #dcf8c6;
+            text-align: right;
+        }
+        .other-message {
+            background-color: #e5e5ea;
+        }
+        .input-area {
+            display: flex;
+            gap: 10px;
+        }
+        input {
+            flex: 1;
+            padding: 5px;
+        }
+        button {
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <h1>ChatPlus 房间消息测试</h1>
+    <div class="chat-container">
+        <div class="user-panel">
+            <h2>用户1</h2>
+            <div class="messages" id="user1-messages"></div>
+            <div class="input-area">
+                <input type="text" id="user1-input" placeholder="输入消息...">
+                <button onclick="sendMessage('user1')">发送</button>
+            </div>
+            <button onclick="createRoom('user1')">创建房间</button>
+            <button onclick="joinRoom('user1')">加入房间</button>
+            <div>房间ID: <span id="user1-room-id"></span></div>
+        </div>
+        <div class="user-panel">
+            <h2>用户2</h2>
+            <div class="messages" id="user2-messages"></div>
+            <div class="input-area">
+                <input type="text" id="user2-input" placeholder="输入消息...">
+                <button onclick="sendMessage('user2')">发送</button>
+            </div>
+            <button onclick="joinRoom('user2')">加入房间</button>
+            <div>房间ID: <span id="user2-room-id"></span></div>
+        </div>
+    </div>
+
+    <script>
+        // 连接设置
+        const SERVER_URL = 'http://localhost:3001';
+        let currentRoomId = null;
+
+        // 用户1连接
+        const user1Socket = io(SERVER_URL);
+        user1Socket.emit('login', 'test-user1');
+
+        // 用户2连接
+        const user2Socket = io(SERVER_URL);
+        user2Socket.emit('login', 'test-user2');
+
+        // 监听新消息
+        user1Socket.on('newMessage', (message) => {
+            if (message.conversationId === currentRoomId) {
+                addMessage('user1', message.senderName, message.content, message.sender === user1Socket.id);
+            }
+        });
+
+        user2Socket.on('newMessage', (message) => {
+            if (message.conversationId === currentRoomId) {
+                addMessage('user2', message.senderName, message.content, message.sender === user2Socket.id);
+            }
+        });
+
+        // 监听房间创建成功
+        user1Socket.on('roomCreated', (room) => {
+            currentRoomId = room.id;
+            document.getElementById('user1-room-id').textContent = room.id;
+            document.getElementById('user2-room-id').textContent = room.id;
+            addMessage('user1', '系统', `房间创建成功: ${room.name} (${room.id})`);
+        });
+
+        // 监听房间加入成功
+        user1Socket.on('roomJoined', () => {
+            addMessage('user1', '系统', '成功加入房间');
+        });
+
+        user2Socket.on('roomJoined', () => {
+            addMessage('user2', '系统', '成功加入房间');
+        });
+
+        // 添加消息到界面
+        function addMessage(userPanel, sender, content, isOwn) {
+            const messagesDiv = document.getElementById(`${userPanel}-messages`);
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isOwn ? 'own-message' : 'other-message'}`;
+            messageDiv.innerHTML = `<strong>${sender}:</strong> ${content}`;
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        // 发送消息
+        function sendMessage(userPanel) {
+            if (!currentRoomId) {
+                addMessage(userPanel, '系统', '请先创建或加入房间', true);
+                return;
+            }
+
+            const inputElement = document.getElementById(`${userPanel}-input`);
+            const content = inputElement.value;
+            if (!content) return;
+
+            const socket = userPanel === 'user1' ? user1Socket : user2Socket;
+            socket.emit('sendMessage', {
+                conversationType: 'room',
+                conversationId: currentRoomId,
+                content: content
+            });
+
+            inputElement.value = '';
+        }
+
+        // 创建房间
+        function createRoom(userPanel) {
+            const socket = userPanel === 'user1' ? user1Socket : user2Socket;
+            const roomName = '测试房间-' + Math.floor(Math.random() * 10000);
+            socket.emit('createRoom', roomName);
+        }
+
+        // 加入房间
+        function joinRoom(userPanel) {
+            if (!currentRoomId) {
+                addMessage(userPanel, '系统', '请先创建房间', true);
+                return;
+            }
+
+            const socket = userPanel === 'user1' ? user1Socket : user2Socket;
+            socket.emit('joinRoom', currentRoomId);
+        }
+    </script>
+</body>
+</html>
